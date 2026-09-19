@@ -1,21 +1,29 @@
 package core
 
 type Config struct {
-	Name      string           `json:"name" yaml:"name"`
-	Profile   string           `json:"profile,omitempty" yaml:"profile,omitempty"`
-	Targets   []TargetConfig   `json:"targets" yaml:"targets"`
-	Checks    CheckConfig      `json:"checks" yaml:"checks"`
-	AI        AIConfig         `json:"ai,omitempty" yaml:"ai,omitempty"`
-	RulePacks []RulePackConfig `json:"rule_packs,omitempty" yaml:"rule_packs,omitempty"`
+	// CodeguardVersion records which codeguard release last wrote this file.
+	// It is stamped on write and never validated: a config written by an older
+	// or newer release must always still load, so the field is provenance for
+	// a human reading the file, not a compatibility gate.
+	CodeguardVersion string           `json:"codeguard_version,omitempty" yaml:"codeguard_version,omitempty"`
+	Name             string           `json:"name" yaml:"name"`
+	Profile          string           `json:"profile,omitempty" yaml:"profile,omitempty"`
+	Targets          []TargetConfig   `json:"targets" yaml:"targets"`
+	Checks           CheckConfig      `json:"checks" yaml:"checks"`
+	AI               AIConfig         `json:"ai,omitempty" yaml:"ai,omitempty"`
+	RulePacks        []RulePackConfig `json:"rule_packs,omitempty" yaml:"rule_packs,omitempty"`
 	// ExternalReports imports findings produced by already-run scanners. CodeGuard
 	// only reads these files; it never executes the configured tools.
 	ExternalReports []ExternalReportConfig `json:"external_reports,omitempty" yaml:"external_reports,omitempty"`
 	Output          OutputConfig           `json:"output" yaml:"output"`
 	Exclude         []string               `json:"exclude,omitempty" yaml:"exclude,omitempty"`
-	Baseline        BaselineConfig         `json:"baseline,omitempty" yaml:"baseline,omitempty"`
-	Waivers         []WaiverConfig         `json:"waivers,omitempty" yaml:"waivers,omitempty"`
-	Cache           CacheConfig            `json:"cache,omitempty" yaml:"cache,omitempty"`
-	Parsers         ParsersConfig          `json:"parsers,omitempty" yaml:"parsers,omitempty"`
+	// ScanVendoredSource includes source beneath directories named vendor.
+	// Installed node_modules and generated cdk.out trees remain excluded.
+	ScanVendoredSource bool           `json:"scan_vendored_source,omitempty" yaml:"scan_vendored_source,omitempty"`
+	Baseline           BaselineConfig `json:"baseline,omitempty" yaml:"baseline,omitempty"`
+	Waivers            []WaiverConfig `json:"waivers,omitempty" yaml:"waivers,omitempty"`
+	Cache              CacheConfig    `json:"cache,omitempty" yaml:"cache,omitempty"`
+	Parsers            ParsersConfig  `json:"parsers,omitempty" yaml:"parsers,omitempty"`
 }
 
 // ExternalReportConfig describes a report file produced by another scanner.
@@ -56,6 +64,9 @@ type TargetConfig struct {
 	Path        string   `json:"path" yaml:"path"`
 	Language    string   `json:"language" yaml:"language"`
 	Entrypoints []string `json:"entrypoints,omitempty" yaml:"entrypoints,omitempty"`
+	// LogicalPath preserves the target's repository-relative path when a
+	// folder-scoped scan replaces Path with a narrower filesystem root.
+	LogicalPath string `json:"-" yaml:"-"`
 }
 
 type CheckConfig struct {
@@ -126,6 +137,43 @@ type CheckConfig struct {
 	ContractRules      ContractRulesConfig      `json:"contract_rules" yaml:"contract_rules"`
 	ContextRules       ContextRulesConfig       `json:"context_rules" yaml:"context_rules"`
 	ProductionRisk     ProductionRiskConfig     `json:"production_risk,omitempty" yaml:"production_risk,omitempty"`
+	// MinConfidence drops findings whose confidence sits below the configured
+	// level, globally or per section. Omitted (or "low") admits every finding,
+	// which is the historical behavior. Filtering happens when a section is
+	// finalized, after the per-file findings cache, so changing a threshold
+	// re-renders a scan rather than re-running one.
+	MinConfidence ConfidencePolicyConfig `json:"min_confidence,omitempty" yaml:"min_confidence,omitempty"`
+	// ConfidenceDemotion reports a low-confidence finding on a failing rule as
+	// a warning instead. It never promotes, and never applies to medium or
+	// high confidence. Off by default.
+	ConfidenceDemotion bool `json:"confidence_demotion,omitempty" yaml:"confidence_demotion,omitempty"`
+}
+
+// ConfidencePolicyConfig is the minimum-confidence policy: one default plus
+// optional per-section overrides keyed by section id.
+type ConfidencePolicyConfig struct {
+	Default  string            `json:"default,omitempty" yaml:"default,omitempty"`
+	Sections map[string]string `json:"sections,omitempty" yaml:"sections,omitempty"`
+}
+
+// Threshold resolves the minimum confidence for a section: its own override
+// when present, otherwise the policy default, otherwise ConfidenceLow, which
+// admits every finding. Levels and section keys are normalized, so casing and
+// surrounding space in a config file do not silently disable the policy.
+func (c ConfidencePolicyConfig) Threshold(sectionID string) string {
+	section := NormalizedSectionKey(sectionID)
+	for key, level := range c.Sections {
+		if NormalizedSectionKey(key) != section {
+			continue
+		}
+		if normalized := NormalizedConfidence(level); normalized != "" {
+			return normalized
+		}
+	}
+	if normalized := NormalizedConfidence(c.Default); normalized != "" {
+		return normalized
+	}
+	return ConfidenceLow
 }
 
 type OutputConfig struct {

@@ -14,7 +14,7 @@
 
 `codeguard` is a standalone Go service and CLI for repository checks across code quality, production reliability, data correctness, design boundaries, security, CI/CD hygiene, AI prompt governance, and repo-specific policy rules.
 
-It now supports repository exclusions, baselines, waivers, changed-lines diff scans, SARIF output, GitHub annotations, custom rule packs, natural-language custom rules through an optional AI runtime, policy profiles, scan caching, doctor checks, rule discovery from the CLI, native TypeScript/Python quality, design, security, reliability, and data-correctness heuristics, and language-specific command checks.
+It now supports repository exclusions, baselines, waivers, changed-lines diff scans, SARIF output, GitHub annotations, custom rule packs, natural-language custom rules through an optional AI runtime, policy profiles, per-section minimum-confidence policy, scan caching, doctor checks, rule discovery from the CLI, native TypeScript/Python quality, design, security, reliability, and data-correctness heuristics, and language-specific command checks.
 
 For a user-facing glossary of every check family and subsection, see [docs/checks.md](docs/checks.md).
 
@@ -88,6 +88,7 @@ codeguard init
 codeguard validate -config codeguard.yaml
 codeguard doctor -config codeguard.yaml
 codeguard scan -config codeguard.yaml
+codeguard scan -config codeguard.yaml -memprofile /tmp/codeguard.heap.pprof
 codeguard scan -config codeguard.yaml -folder ./internal/codeguard
 codeguard scan -folder ./internal/codeguard -profile startup
 codeguard scan -folder ./internal/codeguard -profile startup -set checks.quality=true -set output.format=json
@@ -107,6 +108,8 @@ codeguard baseline policy -config codeguard.yaml -compare-baseline /tmp/base-bas
 By default, `codeguard` looks for `codeguard.yaml`, `codeguard.yml`, or `codeguard.json` in the repository root. If those are missing, it also checks for the same file names inside a `.codeguard/` directory.
 
 If you point `-config` at a directory such as `.codeguard`, `codeguard` will look inside it for `codeguard.*` or `config.*` files.
+
+Long-running scans report completed sections and a 30-second heap/GOMEMLIMIT heartbeat on stderr, leaving JSON, SARIF, GitHub, and CycloneDX stdout machine-readable. Pass `-memprofile <path>` to keep a rolling Go heap profile (written at startup, every heartbeat, and completion), then inspect it with `go tool pprof <path>`. Full scans skip dependency and generated trees named `node_modules`, `vendor`, and `cdk.out` at any depth; use `exclude` for repository-specific generated paths.
 
 Use `codeguard scan -folder <path>` to scan only one folder. `-path <path>` is accepted as an alias. If no config file exists and you did not pass `-config`, folder scans use CodeGuard's built-in default config; add `-profile startup`, `-profile strict`, `-profile enterprise`, or `-profile ai-safe` to choose a default profile.
 

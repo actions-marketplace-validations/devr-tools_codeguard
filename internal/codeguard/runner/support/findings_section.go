@@ -99,10 +99,28 @@ func FinalizeSection(sc Context, id string, name string, findings []core.Finding
 }
 
 func FinalizeSectionWithDiagnostics(sc Context, id string, name string, findings []core.Finding, diagnostics []core.Diagnostic) core.SectionResult {
+	if sc.corpus != nil {
+		diagnostics = append(diagnostics, sc.corpus.takeDiagnostics()...)
+	}
 	section := core.SectionResult{ID: id, Name: name, Status: core.StatusPass}
 	active := make([]core.Finding, 0, len(findings))
 	for _, finding := range findings {
 		if sc.Opts.Mode == core.ScanModeDiff && finding.Path != "" && !matchesDiff(sc, finding) {
+			continue
+		}
+		// The confidence policy decides whether a finding is shown at all, so it
+		// runs before waiver auditing and suppression matching: a finding the
+		// scanner is not confident enough to report is not a finding a team
+		// waived or baselined.
+		if !core.MeetsConfidence(finding.Confidence, sc.Cfg.Checks.MinConfidence.Threshold(id)) {
+			section.ConfidenceFilteredCount++
+			sc.RuleStats.RecordConfidenceFiltered(finding.RuleID)
+			if sc.Opts.IncludeSuppressed {
+				finding.Suppressed = true
+				finding.SuppressionReason = SuppressionReasonConfidence
+				finding.Suppression = &core.Suppression{Kind: SuppressionReasonConfidence}
+				sc.Suppressed.Add(finding)
+			}
 			continue
 		}
 		sc.WaiverAudit.RecordMatches(MatchingWaivers(sc, finding), finding)
@@ -118,6 +136,7 @@ func FinalizeSectionWithDiagnostics(sc Context, id string, name string, findings
 			continue
 		}
 		sc.RuleStats.RecordEmitted(finding.RuleID)
+		finding = demoteLowConfidence(sc, finding)
 		active = append(active, finding)
 		switch finding.Level {
 		case "fail":
@@ -147,6 +166,22 @@ func FinalizeSectionWithDiagnostics(sc Context, id string, name string, findings
 		sc.Opts.OnSectionComplete(section)
 	}
 	return section
+}
+
+// demoteLowConfidence reports a low-confidence failing finding as a warning
+// when checks.confidence_demotion is on. It only ever lowers a level, and it
+// leaves finding identity untouched: fingerprints derive from rule, path, and
+// source, so a demoted finding still matches its baseline entry.
+func demoteLowConfidence(sc Context, finding core.Finding) core.Finding {
+	if !sc.Cfg.Checks.ConfidenceDemotion {
+		return finding
+	}
+	if finding.Confidence != core.ConfidenceLow || finding.Level != "fail" {
+		return finding
+	}
+	finding.Level = "warn"
+	finding.Severity = "warn"
+	return finding
 }
 
 func matchesDiff(sc Context, finding core.Finding) bool {

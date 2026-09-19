@@ -107,6 +107,24 @@ This page lists the current `codeguard` feature surface and the main config entr
 See [Production rollout](production.md) for configuration, safe CI usage,
 review workflow, and exit-code behavior.
 
+## Repository traversal
+
+Full scans always prune directories named `node_modules` and `cdk.out` at any
+depth. Dependency manifests and lockfiles remain in scope for supply-chain,
+license, vulnerability, and lockfile-integrity checks; installed and generated
+source is not treated as first-party code.
+
+Directories named `vendor` are also pruned by default. Repositories that commit
+or patch vendored source can opt in explicitly while retaining the normal
+per-file, corpus-byte, AST, and file-count limits:
+
+```yaml
+scan_vendored_source: true
+```
+
+Configured `exclude` patterns still take precedence, so an explicitly excluded
+vendor subtree remains excluded when vendored-source scanning is enabled.
+
 ## External report ingestion
 
 CodeGuard can import findings from scanners that have already run. It does not
@@ -193,6 +211,64 @@ JSON:
 {
   "parsers": {
     "treesitter": "auto"
+  }
+}
+```
+
+### Config provenance
+
+Every config codeguard writes (`codeguard init`, `WriteConfigFile`) records the
+release that produced it as a top-level `codeguard_version`. Loading reports
+what the file says rather than the running binary, so a config written by a
+different release is visible on inspection.
+
+The stamp is provenance only: it is never validated, so a config written by an
+older or newer release always loads, and it is excluded from the per-file cache
+fingerprints, so a release upgrade does not discard cached findings.
+
+```yaml
+codeguard_version: v1.9.0
+name: my-repo
+```
+
+### Minimum confidence policy
+
+Drop findings the scanner is not confident enough about, globally or per
+section, and optionally report low-confidence failures as warnings. Omitting
+the block admits every finding, which is the default behavior. Section keys are
+the ids reported in scan output (the same names `checks.disabled` accepts).
+
+Both settings are applied when a section is finalized, after the per-file
+findings cache, so changing a threshold re-renders a scan rather than
+re-running one, and neither changes a finding's fingerprint or its baseline
+match. Every removed finding is counted per rule as `confidence_filtered` and
+per section as `confidence_filtered_count`.
+
+YAML:
+
+```yaml
+checks:
+  min_confidence:
+    default: medium
+    sections:
+      security: high
+      quality: low
+  confidence_demotion: true
+```
+
+JSON:
+
+```json
+{
+  "checks": {
+    "min_confidence": {
+      "default": "medium",
+      "sections": {
+        "security": "high",
+        "quality": "low"
+      }
+    },
+    "confidence_demotion": true
   }
 }
 ```
